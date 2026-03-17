@@ -116,7 +116,7 @@ public struct SVGPDFConverter {
             height: drawRect.height
         )
 
-        image.draw(in: context, rect: flippedRect)
+        context.draw(image, in: flippedRect)
         context.restoreGState()
 
         context.endPage()
@@ -135,8 +135,8 @@ public struct SVGPDFConverter {
         }
     }
 
-    private func parseImage(from data: Data) throws -> SwiftDraw.Image {
-        guard let image = SwiftDraw.Image(data: data) else {
+    private func parseImage(from data: Data) throws -> SwiftDraw.SVG {
+        guard let image = SwiftDraw.SVG(data: data) else {
             throw SVGPDFError.svgParsingFailed(underlying: nil)
         }
         return image
