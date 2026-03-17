@@ -1,19 +1,23 @@
-import CoreGraphics
 import Foundation
+#if canImport(CoreGraphics)
+import CoreGraphics
+#endif
 
 /// The physical dimensions of a PDF page, in points (1 point = 1/72 inch).
 public struct PageSize: Sendable {
-    public let width: CGFloat
-    public let height: CGFloat
+    public let width: Double
+    public let height: Double
 
-    public init(width: CGFloat, height: CGFloat) {
+    public init(width: Double, height: Double) {
         self.width = width
         self.height = height
     }
 
+#if canImport(CoreGraphics)
     public var cgRect: CGRect {
         CGRect(x: 0, y: 0, width: width, height: height)
     }
+#endif
 }
 
 // MARK: - Standard Presets

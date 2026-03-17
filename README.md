@@ -4,6 +4,15 @@ A Swift package that converts SVG documents into PDF files, with support for mul
 
 Works on **macOS** and **Linux** (Swift 6.2+).
 
+> **Linux requirement:** On Linux, SVGPDFKit uses `rsvg-convert` (from the `librsvg` package) to render SVGs. Install it before use:
+> ```sh
+> # Debian/Ubuntu
+> sudo apt-get install librsvg2-bin
+>
+> # Fedora/RHEL
+> sudo dnf install librsvg2-tools
+> ```
+
 ## Features
 
 - Convert one or more SVG sources into a single multi-page PDF

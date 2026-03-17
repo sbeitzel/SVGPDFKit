@@ -1,4 +1,3 @@
-import CoreGraphics
 import Foundation
 
 /// Configuration options for SVG → PDF conversion.
@@ -10,7 +9,7 @@ public struct ConversionOptions: Sendable {
 
     /// Uniform inset applied to all four edges of the SVG content within the page.
     /// Defaults to 36 points (0.5 inch).
-    public var margin: CGFloat
+    public var margin: Double
 
     /// The element ID that SVGPDFKit looks for when injecting page numbers.
     /// ABCKit should emit an SVG `<text>` element with this ID as a placeholder.
@@ -29,7 +28,7 @@ public struct ConversionOptions: Sendable {
 
     public init(
         pageSize: PageSize = .letter,
-        margin: CGFloat = 36,
+        margin: Double = 36,
         pageNumberElementID: String = "svgpdfkit-page-number",
         injectPageNumbers: Bool = true,
         startingPageNumber: Int = 1
