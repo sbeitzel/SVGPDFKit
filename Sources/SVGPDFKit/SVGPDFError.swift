@@ -18,6 +18,9 @@ public enum SVGPDFError: Error, CustomStringConvertible {
     /// A file URL could not be read from disk.
     case fileReadFailed(url: URL, underlying: Error)
 
+    /// The `rsvg-convert` subprocess exited with a non-zero status (Linux only).
+    case rsvgConvertFailed(exitCode: Int32, stderr: String)
+
     public var description: String {
         switch self {
         case .invalidSVGEncoding:
@@ -33,6 +36,8 @@ public enum SVGPDFError: Error, CustomStringConvertible {
             return "At least one SVGSource must be provided."
         case .fileReadFailed(let url, let error):
             return "Could not read file at \(url.path): \(error.localizedDescription)"
+        case .rsvgConvertFailed(let exitCode, let stderr):
+            return "rsvg-convert exited with code \(exitCode): \(stderr)"
         }
     }
 }
