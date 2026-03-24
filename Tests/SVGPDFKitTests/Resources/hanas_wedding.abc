@@ -1,0 +1,30 @@
+%abc-2.2
+%%titleformat T0, R-1 C1
+%%footer "		Generated: $D"
+%%straightflags false
+%%flatbeams true
+%%graceslurs false
+%%dateformat "%e %B %Y %H:%M"
+%%scale 0.65
+%%landscape 0
+
+X:2
+T:Hana's Wedding
+C:Erik J. Leiken, Arr. Adam Blaine
+R:March
+M:6/8
+L:1/8
+K:D
+[|: {g}f<e | {Gdc}d3 {g}A>d{G}d | {gde}d>cd {g}f>ed | {g}G>{d}G{e}G {g}G>Bd | {gcd}c>B{d}c {g}A>fe |
+{Gdc}d3 {g}A>d{G}d | {gde}d>cd {g}f>ga | G>Bd {gcd}c>B{G}A | {g}A>{d}ce {Gdc}d2 :|]
+{gf}g | {ag}a2 f {g}A>d{G}d | {gde}d>cd {g}f>ed | {g}G>{d}G{e}G {g}G>Bd | {gcd}c>B{d}c {g}A2 {gf}g |
+{ag}a2 f {g}A>d{G}d | {gde}d>cd {g}f>ga | G>Bd {gcd}c>B{G}A | {g}A>{d}ce {Gdc}d2 {gf}g |
+{ag}a2 f {g}A>d{G}d | {gde}d>cd {g}f>ed | {g}G>{d}G{e}G {g}G>Bd | {gcd}c>B{d}c {g}A>fe |
+{Gdc}d3 {g}A>d{G}d | {gde}d>cd {g}f>ga | G>Bd {gcd}c>B{G}A | {g}A>{d}ce {Gdc}d2 ||
+|: A | {g}d>ef {g}A2 {GdGe}A | {g}d>ef {ag}a2 f | {g}G>{d}G{e}G {g}G>Bd | {gcd}c>B{d}c {g}A>fe |
+{g}d>ef {g}A2 {GdGe}A | {g}d>ef {g}f>ga |  G>Bd {gcd}c>B{G}A | {g}A>{d}ce {Gdc}d2 :|]
+{gf}g | {ag}a>de {gfg}f2 d | A>df a>fd | {g}G>{d}G{e}G {g}G>Bd | {gcd}c>B{d}c {g}A2 {gf}g |
+{ag}a>de {gfg}f2 d | {g}A>df {g}f>ga | G>Bd {gcd}c>B{G}A | {g}A>{d}ce {Gdc}d2 {gf}g |
+{ag}a>de {gfg}f2 d | A>df a>fd | {g}G>{d}G{e}G {g}G>Bd | {gcd}c>B{d}c {g}A>fe |
+{g}d>ef {g}A2 {GdGe}A | {g}d>ef {g}f>ga |  G>Bd {gcd}c>B{G}A | {g}A>{d}ce {Gdc}d2 |]
+
