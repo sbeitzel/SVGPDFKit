@@ -60,6 +60,16 @@ final class SVGPDFConverterTests: XCTestCase {
         XCTAssertEqual(header, "%PDF")
     }
 
+    func testConvertsFileURLSourceWithoutPageNumberElement() throws {
+        let converter = SVGPDFConverter()
+        let source = SVGSource.fileURL(noPageNumberSVGURL)
+        let pdfData = try converter.convert(source: source)
+
+        XCTAssertFalse(pdfData.isEmpty)
+        let header = String(data: pdfData.prefix(4), encoding: .ascii)
+        XCTAssertEqual(header, "%PDF")
+    }
+
     func testConvertsSingleDataSource() throws {
         let svgData = try XCTUnwrap(makeSVGString().data(using: .utf8))
         let converter = SVGPDFConverter()

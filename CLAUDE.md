@@ -42,6 +42,8 @@ SVGSource (.fileURL | .data | .string)
 
 ## Tests
 
-Tests are in `Tests/SVGPDFKitTests/`. Two files use XCTest (`SVGPDFConverterTests.swift`, `PageNumberInjectorTests.swift`); the third (`SVGPDFKitTests.swift`) is an empty Swift Testing stub.
+Tests are in `Tests/SVGPDFKitTests/`, all XCTest: `SVGPDFConverterTests.swift`, `PageNumberInjectorTests.swift`, and `RsvgSubprocessTests.swift` (Linux only — the file compiles to nothing where CoreGraphics exists).
 
-`SVGPDFConverterTests` requires two SVG fixture files in `Tests/SVGPDFKitTests/Resources/`: `test-tune.svg` and `no-page-number.svg`. The `Resources/` directory currently exists but is empty, so those tests will fail without the fixtures.
+`Tests/SVGPDFKitTests/Resources/` holds the fixtures: `hanas_wedding.abc` is the source tune, and `test-tune.svg` / `no-page-number.svg` are engraved from it by `Scripts/make-fixtures.sh` (needs `abcm2ps`) — one with the page-number placeholder ABCKit emits, one without. The script normalizes abcm2ps's date stamps, so regenerating an unchanged tune produces no diff.
+
+`swift test` hangs partway through in Linux containers on Docker Desktop; that is a Foundation bug, not this package's. See the README for `Scripts/fineres.c`, which works around it.
