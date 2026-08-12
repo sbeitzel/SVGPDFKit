@@ -96,7 +96,13 @@ options.margin = 36                  // points; default: 36 (0.5 inch)
 options.startingPageNumber = 1       // default: 1
 options.injectPageNumbers = true     // default: true
 options.pageNumberElementID = "svgpdfkit-page-number"  // default
+options.subprocessTimeout = 120      // seconds; default: 120 (Linux only)
 ```
+
+`subprocessTimeout` bounds the `rsvg-convert` run that backs conversion on Linux. A
+child that outlives it is sent `SIGTERM`, then `SIGKILL`, and the conversion throws
+`SVGPDFError.rsvgConvertTimedOut` rather than blocking its caller. The CoreGraphics
+path spawns no subprocess and ignores the setting.
 
 ## Page Size Presets
 

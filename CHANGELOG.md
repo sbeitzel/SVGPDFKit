@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [0.3.0]
 
 ### Fixed
 
@@ -44,5 +44,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Updated `SwiftDraw` API usage: `SwiftDraw.Image` was renamed to `SwiftDraw.SVG`, and the draw call was updated from `image.draw(in:rect:)` to `context.draw(_:in:)` to match the current SwiftDraw API, restoring the build.
 
-[Unreleased]: https://github.com/sbeitzel/SVGPDFKit/compare/0.2.0...HEAD
+[0.3.0]: https://github.com/sbeitzel/SVGPDFKit/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/sbeitzel/SVGPDFKit/compare/0.1.1...0.2.0
