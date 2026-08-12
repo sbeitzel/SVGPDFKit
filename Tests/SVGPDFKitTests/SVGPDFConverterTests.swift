@@ -5,12 +5,22 @@ final class SVGPDFConverterTests: XCTestCase {
 
     // MARK: - Helpers
 
+    /// Fixtures are engraved by `Scripts/make-fixtures.sh`. These throw rather than
+    /// force-unwrap so a missing one fails its own test with a usable message,
+    /// instead of trapping and taking the whole test binary down with it.
     var testSVGURL: URL {
-        Bundle.module.url(forResource: "test-tune", withExtension: "svg", subdirectory: "Resources")!
+        get throws { try fixtureURL(named: "test-tune") }
     }
 
     var noPageNumberSVGURL: URL {
-        Bundle.module.url(forResource: "no-page-number", withExtension: "svg", subdirectory: "Resources")!
+        get throws { try fixtureURL(named: "no-page-number") }
+    }
+
+    private func fixtureURL(named name: String) throws -> URL {
+        try XCTUnwrap(
+            Bundle.module.url(forResource: name, withExtension: "svg", subdirectory: "Resources"),
+            "Missing fixture Resources/\(name).svg — regenerate it with Scripts/make-fixtures.sh"
+        )
     }
 
     // Minimal valid inline SVG as a string
@@ -52,7 +62,8 @@ final class SVGPDFConverterTests: XCTestCase {
 
     func testConvertsSingleFileURLSource() throws {
         let converter = SVGPDFConverter()
-        let source = SVGSource.fileURL(testSVGURL)
+        let url = try testSVGURL
+        let source = SVGSource.fileURL(url)
         let pdfData = try converter.convert(source: source)
 
         XCTAssertFalse(pdfData.isEmpty)
@@ -62,7 +73,8 @@ final class SVGPDFConverterTests: XCTestCase {
 
     func testConvertsFileURLSourceWithoutPageNumberElement() throws {
         let converter = SVGPDFConverter()
-        let source = SVGSource.fileURL(noPageNumberSVGURL)
+        let url = try noPageNumberSVGURL
+        let source = SVGSource.fileURL(url)
         let pdfData = try converter.convert(source: source)
 
         XCTAssertFalse(pdfData.isEmpty)
