@@ -26,17 +26,26 @@ public struct ConversionOptions: Sendable {
     /// Defaults to `1`.
     public var startingPageNumber: Int
 
+    /// How long to wait for the `rsvg-convert` subprocess before giving up and
+    /// throwing `SVGPDFError.rsvgConvertTimedOut`. A conversion that stalls then
+    /// fails the caller instead of blocking forever.
+    /// Defaults to 120 seconds. Only used on platforms without CoreGraphics (Linux);
+    /// the CoreGraphics path spawns no subprocess.
+    public var subprocessTimeout: TimeInterval
+
     public init(
         pageSize: PageSize = .letter,
         margin: Double = 36,
         pageNumberElementID: String = "svgpdfkit-page-number",
         injectPageNumbers: Bool = true,
-        startingPageNumber: Int = 1
+        startingPageNumber: Int = 1,
+        subprocessTimeout: TimeInterval = 120
     ) {
         self.pageSize = pageSize
         self.margin = margin
         self.pageNumberElementID = pageNumberElementID
         self.injectPageNumbers = injectPageNumbers
         self.startingPageNumber = startingPageNumber
+        self.subprocessTimeout = subprocessTimeout
     }
 }

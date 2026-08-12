@@ -37,6 +37,7 @@ SVGSource (.fileURL | .data | .string)
 - `ConversionOptions` — page size, margin (pts), page number element ID, injection toggle, starting page number
 - `PageSize` — points-based size with static presets (`.letter`, `.a4`, `.a3`, landscape variants)
 - `PageNumberInjector` — internal namespace; rewrites `<text id="svgpdfkit-page-number">` text content before rendering
+- `RsvgSubprocess` — internal, Linux only; runs `rsvg-convert` via `posix_spawn`/`waitpid` with a timeout. Foundation's `Process` is deliberately avoided: its `waitUntilExit()` relies on `RunLoop` deadlines, which are never enforced on hosts reporting a coarse `clock_getres(CLOCK_MONOTONIC)` (e.g. Docker Desktop), so it can block forever after the child has exited (issue #1)
 - `SVGPDFError` — typed errors for encoding failures, parse failures, missing file, no input, PDF context failure
 
 ## Tests
