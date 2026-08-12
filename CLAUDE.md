@@ -37,10 +37,13 @@ SVGSource (.fileURL | .data | .string)
 - `ConversionOptions` — page size, margin (pts), page number element ID, injection toggle, starting page number
 - `PageSize` — points-based size with static presets (`.letter`, `.a4`, `.a3`, landscape variants)
 - `PageNumberInjector` — internal namespace; rewrites `<text id="svgpdfkit-page-number">` text content before rendering
+- `RsvgSubprocess` — internal, Linux only; runs `rsvg-convert` via `posix_spawn`/`waitpid` with a timeout. Foundation's `Process` is deliberately avoided: its `waitUntilExit()` relies on `RunLoop` deadlines, which are never enforced on hosts reporting a coarse `clock_getres(CLOCK_MONOTONIC)` (e.g. Docker Desktop), so it can block forever after the child has exited (issue #1)
 - `SVGPDFError` — typed errors for encoding failures, parse failures, missing file, no input, PDF context failure
 
 ## Tests
 
-Tests are in `Tests/SVGPDFKitTests/`. Two files use XCTest (`SVGPDFConverterTests.swift`, `PageNumberInjectorTests.swift`); the third (`SVGPDFKitTests.swift`) is an empty Swift Testing stub.
+Tests are in `Tests/SVGPDFKitTests/`, all XCTest: `SVGPDFConverterTests.swift`, `PageNumberInjectorTests.swift`, and `RsvgSubprocessTests.swift` (Linux only — the file compiles to nothing where CoreGraphics exists).
 
-`SVGPDFConverterTests` requires two SVG fixture files in `Tests/SVGPDFKitTests/Resources/`: `test-tune.svg` and `no-page-number.svg`. The `Resources/` directory currently exists but is empty, so those tests will fail without the fixtures.
+`Tests/SVGPDFKitTests/Resources/` holds the fixtures: `hanas_wedding.abc` is the source tune, and `test-tune.svg` / `no-page-number.svg` are engraved from it by `Scripts/make-fixtures.sh` (needs `abcm2ps`) — one with the page-number placeholder ABCKit emits, one without. The script normalizes abcm2ps's date stamps, so regenerating an unchanged tune produces no diff.
+
+`swift test` hangs partway through in Linux containers on Docker Desktop; that is a Foundation bug, not this package's. See the README for `Scripts/fineres.c`, which works around it.

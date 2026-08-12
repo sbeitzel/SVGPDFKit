@@ -21,6 +21,13 @@ public enum SVGPDFError: Error, CustomStringConvertible {
     /// The `rsvg-convert` subprocess exited with a non-zero status (Linux only).
     case rsvgConvertFailed(exitCode: Int32, stderr: String)
 
+    /// The `rsvg-convert` subprocess could not be started (Linux only).
+    case rsvgConvertLaunchFailed(reason: String)
+
+    /// The `rsvg-convert` subprocess did not finish within
+    /// `ConversionOptions.subprocessTimeout` and was killed (Linux only).
+    case rsvgConvertTimedOut(seconds: TimeInterval)
+
     public var description: String {
         switch self {
         case .invalidSVGEncoding:
@@ -38,6 +45,10 @@ public enum SVGPDFError: Error, CustomStringConvertible {
             return "Could not read file at \(url.path): \(error.localizedDescription)"
         case .rsvgConvertFailed(let exitCode, let stderr):
             return "rsvg-convert exited with code \(exitCode): \(stderr)"
+        case .rsvgConvertLaunchFailed(let reason):
+            return "Could not start rsvg-convert: \(reason)"
+        case .rsvgConvertTimedOut(let seconds):
+            return "rsvg-convert did not finish within \(seconds) seconds and was killed."
         }
     }
 }

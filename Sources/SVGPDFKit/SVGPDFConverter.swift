@@ -208,13 +208,13 @@ extension SVGPDFConverter {
         return url
     }
 
+    static let rsvgConvertPath = "/usr/bin/rsvg-convert"
+
     private func runRsvgConvert(inputs: [String], output: String) throws {
         let contentWidth = options.pageSize.width - 2 * options.margin
         let contentHeight = options.pageSize.height - 2 * options.margin
 
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/rsvg-convert")
-        process.arguments = [
+        let arguments = [
             "--format=pdf",
             "--page-width=\(options.pageSize.width)pt",
             "--page-height=\(options.pageSize.height)pt",
@@ -224,20 +224,58 @@ extension SVGPDFConverter {
             "-o", output
         ] + inputs
 
-        let stderrPipe = Pipe()
-        process.standardError = stderrPipe
+        // The child's stderr goes to a file rather than a `Pipe`. Nothing can drain
+        // a pipe while we are waiting for the child, so a document that makes
+        // rsvg-convert emit more than the pipe buffer (~64 KB on Linux — one warning
+        // per element is easy to reach) would deadlock: the child blocked in write(),
+        // the parent blocked waiting for the child.
+        let stderrPath = output + ".stderr"
+        defer { try? FileManager.default.removeItem(atPath: stderrPath) }
 
-        try process.run()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
-            let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-            let stderrString = String(data: stderrData, encoding: .utf8) ?? ""
-            throw SVGPDFError.rsvgConvertFailed(
-                exitCode: process.terminationStatus,
-                stderr: stderrString
+        let outcome: RsvgSubprocess.Outcome
+        do {
+            outcome = try RsvgSubprocess.run(
+                executable: Self.rsvgConvertPath,
+                arguments: arguments,
+                stderrPath: stderrPath,
+                timeout: options.subprocessTimeout
             )
+        } catch RsvgSubprocess.Failure.timedOut {
+            throw SVGPDFError.rsvgConvertTimedOut(seconds: options.subprocessTimeout)
+        } catch RsvgSubprocess.Failure.launchFailed(let reason) {
+            throw SVGPDFError.rsvgConvertLaunchFailed(reason: reason)
         }
+
+        let stderrText = readStderr(atPath: stderrPath)
+
+        switch outcome {
+        case .exited(let code) where code == 0:
+            return
+        case .exited(let code):
+            throw SVGPDFError.rsvgConvertFailed(exitCode: code, stderr: stderrText)
+        case .signalled(let signal):
+            // Foundation's convention: a signal is reported as a negative exit code.
+            throw SVGPDFError.rsvgConvertFailed(exitCode: -signal, stderr: stderrText)
+        case .statusUnavailable:
+            // We never saw an exit status, so judge the child by what it produced.
+            let attributes = try? FileManager.default.attributesOfItem(atPath: output)
+            guard let size = attributes?[.size] as? Int, size > 0 else {
+                throw SVGPDFError.rsvgConvertFailed(exitCode: -1, stderr: stderrText)
+            }
+        }
+    }
+
+    /// Reads captured stderr, truncating it so a pathological document cannot turn
+    /// an error message into megabytes of warnings.
+    private func readStderr(atPath path: String) -> String {
+        guard let data = FileManager.default.contents(atPath: path) else { return "" }
+
+        let limit = 8 * 1024
+        guard data.count > limit else {
+            return String(decoding: data, as: UTF8.self)
+        }
+        let head = String(decoding: data.prefix(limit), as: UTF8.self)
+        return head + "\n… (\(data.count - limit) further bytes of rsvg-convert output suppressed)"
     }
 }
 #endif

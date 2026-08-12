@@ -109,6 +109,25 @@ options.pageNumberElementID = "svgpdfkit-page-number"  // default
 | `.a3` | 297 × 420 mm |
 | `PageSize(width:height:)` | Custom, in points |
 
+## Testing on Linux under Docker Desktop
+
+`swift test` hangs unpredictably in Linux containers on Docker Desktop for Mac — usually
+partway through a suite, in XCTest's teardown. That is a Foundation bug, not a SVGPDFKit
+one: Docker Desktop's VM kernel reports a 1 ms `CLOCK_MONOTONIC` resolution, which corrupts
+CoreFoundation's timebase and leaves every `RunLoop` deadline unenforced, so any wait built
+on one blocks forever. It is [fixed upstream](https://github.com/swiftlang/swift-corelibs-foundation/pull/5485)
+but not in a released toolchain yet.
+
+`Scripts/fineres.c` works around it until then:
+
+```bash
+clang -shared -fPIC -o /tmp/fineres.so Scripts/fineres.c
+LD_PRELOAD=/tmp/fineres.so swift test
+```
+
+Native Linux hosts (CI runners, cloud VMs, bare metal) report a 1 ns resolution and are
+unaffected, so this is only needed for local container testing.
+
 ## License
 
 MIT
