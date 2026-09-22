@@ -160,6 +160,11 @@ options.subprocessTimeout = 120      // seconds; default: 120 (Linux only)
 options.diagnosticHandler = .standardError             // default
 ```
 
+`margin` is an inset on all four edges. Each page is scaled to fit inside what is
+left of the page, preserving its aspect ratio, and centred in whatever slack the fit
+leaves over — identically on macOS and Linux, so a PDF built on either platform puts
+the same page in the same place.
+
 `subprocessTimeout` bounds the `rsvg-convert` run that backs conversion on Linux. A
 child that outlives it is sent `SIGTERM`, then `SIGKILL`, and the conversion throws
 `SVGPDFError.rsvgConvertTimedOut` rather than blocking its caller. The CoreGraphics

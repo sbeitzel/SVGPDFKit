@@ -25,6 +25,7 @@ SVGPDFKit is a Swift Package (macOS 12+, Linux-compatible) that converts SVG fil
 SVGSource (.fileURL | .data | .string)
     → resolveData()          — reads to raw SVG Data
     → PageNumberInjector      — optional regex rewrite of a <text id="..."> element
+    → SVGPageComposer         — Linux only; rewrites the page to carry its own placement
     → SwiftDraw.Image(data:)  — parse SVG
     → CGContext (PDF)         — aspect-fit + coordinate-flip into page rect
     → Data                   — PDF bytes returned to caller
@@ -37,12 +38,13 @@ SVGSource (.fileURL | .data | .string)
 - `ConversionOptions` — page size, margin (pts), page number element ID, injection toggle, starting page number
 - `PageSize` — points-based size with static presets (`.letter`, `.a4`, `.a3`, landscape variants)
 - `PageNumberInjector` — internal namespace; rewrites `<text id="svgpdfkit-page-number">` text content before rendering
+- `SVGPageComposer` — internal namespace; owns page placement. `fitRect` is the aspect-fit-and-centre arithmetic *both* backends use. `compose` is the Linux half: rsvg-convert sizes its drawing box but always fits to the top-left of it, and one invocation renders every input with one set of arguments, so offsets cannot be passed per page — instead each document is wrapped in a page-sized root `<svg>` with the original as a nested viewport at its fitted rect (issue #4)
 - `RsvgSubprocess` — internal, Linux only; runs `rsvg-convert` via `posix_spawn`/`waitpid` with a timeout. Foundation's `Process` is deliberately avoided: its `waitUntilExit()` relies on `RunLoop` deadlines, which are never enforced on hosts reporting a coarse `clock_getres(CLOCK_MONOTONIC)` (e.g. Docker Desktop), so it can block forever after the child has exited (issue #1)
 - `SVGPDFError` — typed errors for encoding failures, parse failures, missing file, no input, PDF context failure
 
 ## Tests
 
-Tests are in `Tests/SVGPDFKitTests/`, all XCTest: `SVGPDFConverterTests.swift`, `PageNumberInjectorTests.swift`, and `RsvgSubprocessTests.swift` (Linux only — the file compiles to nothing where CoreGraphics exists).
+Tests are in `Tests/SVGPDFKitTests/`, all XCTest: `SVGPDFConverterTests.swift`, `PageNumberInjectorTests.swift`, `SVGPageComposerTests.swift`, and `RsvgSubprocessTests.swift` (Linux only — the file compiles to nothing where CoreGraphics exists).
 
 `Tests/SVGPDFKitTests/Resources/` holds the fixtures: `hanas_wedding.abc` is the source tune, and `test-tune.svg` / `no-page-number.svg` are engraved from it by `Scripts/make-fixtures.sh` (needs `abcm2ps`) — one with the page-number placeholder ABCKit emits, one without. The script normalizes abcm2ps's date stamps, so regenerating an unchanged tune produces no diff.
 
