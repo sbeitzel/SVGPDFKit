@@ -3,12 +3,37 @@ import Foundation
 /// Configuration options for SVG → PDF conversion.
 public struct ConversionOptions: Sendable {
 
-    /// The page size to use for each PDF page.
-    /// Defaults to US Letter.
-    public var pageSize: PageSize
+    /// The page size to use for each PDF page, or `nil` to give each page the
+    /// size its own SVG declares.
+    ///
+    /// With a `PageSize`, every page in the document is that size and each SVG is
+    /// aspect-fitted inside it less `margin`. With `nil`, each page's media box is
+    /// the page the SVG declares — its root `width`/`height` converted to points,
+    /// or failing that its `viewBox` read as user units — and the document is
+    /// rendered onto it at 1:1. That is what makes a mixed-orientation binder
+    /// expressible: landscape tunes get landscape pages and portrait tunes get
+    /// portrait ones, in one document, with nothing scaled to fit a size the
+    /// caller had to guess ([#5](https://github.com/sbeitzel/SVGPDFKit/issues/5)).
+    ///
+    /// `margin` does not apply when this is `nil`: the SVG's own box *is* the
+    /// page, so there is no room to inset the content into without scaling it,
+    /// and scaling it is the thing `nil` exists to avoid. An SVG that wants
+    /// margins should be engraved with them.
+    ///
+    /// An explicit `pageSize` whose proportions differ from the SVG's is reported
+    /// to `diagnosticHandler` as `pageSizeMismatch`, since aspect-fitting a
+    /// landscape page onto a portrait one silently shrinks the content — the
+    /// failure that [#5](https://github.com/sbeitzel/SVGPDFKit/issues/5) was
+    /// filed for. A `nil` `pageSize` on an SVG that declares no size at all
+    /// throws `SVGPDFError.intrinsicPageSizeUnavailable`.
+    ///
+    /// Defaults to `.letter`.
+    public var pageSize: PageSize?
 
     /// Uniform inset applied to all four edges of the SVG content within the page.
     /// Defaults to 36 points (0.5 inch).
+    ///
+    /// Ignored when `pageSize` is `nil`; see there.
     public var margin: Double
 
     /// The element ID that SVGPDFKit looks for when injecting page numbers.
@@ -53,13 +78,14 @@ public struct ConversionOptions: Sendable {
     /// Where non-fatal conditions noticed during conversion are sent.
     ///
     /// Defaults to `.standardError`, which writes one line per diagnostic to
-    /// stderr, so a page-number placeholder that never matched is visible
+    /// stderr, so a page-number placeholder that never matched — or a page being
+    /// scaled down to fit a `pageSize` it was not engraved for — is visible
     /// without failing the conversion. Use `.silent` to suppress that, or
     /// supply your own handler to route diagnostics into a logger.
     public var diagnosticHandler: DiagnosticHandler
 
     public init(
-        pageSize: PageSize = .letter,
+        pageSize: PageSize? = .letter,
         margin: Double = 36,
         pageNumberElementID: String = "svgpdfkit-page-number",
         injectPageNumbers: Bool = true,

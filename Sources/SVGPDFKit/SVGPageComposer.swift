@@ -32,6 +32,21 @@ enum SVGPageComposer {
         var height: Double
     }
 
+    /// The page a document declares for itself, and how it said so.
+    struct IntrinsicPageSize: Equatable {
+
+        /// Where the size was read from. A `width`/`height` pair is a statement
+        /// of physical size; a bare `viewBox` is not, and the difference is
+        /// worth telling a caller about.
+        enum Source: Equatable {
+            case widthAndHeight
+            case viewBox
+        }
+
+        var size: PageSize
+        var source: Source
+    }
+
     // MARK: - Geometry
 
     /// The rect a document of `content` size occupies on the page: aspect-fitted
@@ -60,6 +75,31 @@ enum SVGPageComposer {
             width: fittedWidth,
             height: fittedHeight
         )
+    }
+
+    /// The factor an aspect-fit applies to a document of `content` size placed on
+    /// `pageSize` with `margin` on every edge: 1 when it lands at its engraved
+    /// size, less than 1 when the page forced it smaller.
+    static func fitScale(content: Size, pageSize: PageSize, margin: Double) -> Double {
+        guard content.width > 0 else { return 1 }
+        return fitRect(content: content, pageSize: pageSize, margin: margin).width / content.width
+    }
+
+    /// Whether `content` and `pageSize` are different shapes — the tell that an
+    /// explicit `pageSize` is not the one the document was engraved for.
+    ///
+    /// The comparison is against the page rather than the page less its margins,
+    /// because a uniform margin does not preserve a page's proportions: a letter
+    /// document inside 36pt margins fills a 540 × 720 box, which is 3% off letter
+    /// and would report a mismatch on the most ordinary conversion there is. The
+    /// 2% tolerance covers rounding in a producer's own arithmetic while leaving
+    /// the case that matters — a landscape document on a portrait page — nowhere
+    /// to hide.
+    static func isDifferentShape(content: Size, from pageSize: PageSize) -> Bool {
+        guard content.width > 0, content.height > 0, pageSize.height > 0 else { return false }
+        let contentRatio = content.width / content.height
+        let pageRatio = pageSize.width / pageSize.height
+        return abs(contentRatio - pageRatio) / pageRatio > 0.02
     }
 
     // MARK: - Composition
@@ -117,30 +157,64 @@ enum SVGPageComposer {
 
     // MARK: - Reading the root tag
 
-    /// The intrinsic size of a document, in user units: its `width`/`height` if
-    /// both are readable lengths, otherwise the size its `viewBox` declares.
+    /// The page a document declares for itself, in points, and where that came
+    /// from.
     ///
-    /// Only the ratio of the two ends up mattering — `fitRect` scales to fit —
-    /// so a document measured in millimetres fits exactly as one measured in
-    /// points does.
-    static func intrinsicSize(ofRootTag rootTag: String) -> Size? {
+    /// This is what `ConversionOptions.pageSize == nil` renders onto, so unlike
+    /// `intrinsicSize` the units are not incidental: a document sized
+    /// `816px × 1056px` is a 612 × 792 pt page, because a CSS pixel is 1/96 inch
+    /// and a point is 1/72. `rsvg-convert` reaches the same number from the same
+    /// document, so both backends agree on the media box.
+    static func intrinsicPageSize(ofRootTag rootTag: String) -> IntrinsicPageSize? {
         if let width = attribute("width", in: rootTag).flatMap(userUnits),
            let height = attribute("height", in: rootTag).flatMap(userUnits),
            width > 0, height > 0 {
-            return Size(width: width, height: height)
+            return IntrinsicPageSize(
+                size: PageSize(width: width * pointsPerUserUnit, height: height * pointsPerUserUnit),
+                source: .widthAndHeight
+            )
         }
 
+        // A `viewBox` with no `width`/`height` gives the document no intrinsic
+        // size at all, only a coordinate system. Reading its extent as user units
+        // is what every renderer does with it, `rsvg-convert` included, but it is
+        // a guess about a producer's intent and is reported as one.
         if let viewBox = attribute("viewBox", in: rootTag) {
             let numbers = viewBox
                 .split(whereSeparator: { $0 == "," || $0.isWhitespace })
                 .compactMap { Double($0) }
             if numbers.count == 4, numbers[2] > 0, numbers[3] > 0 {
-                return Size(width: numbers[2], height: numbers[3])
+                return IntrinsicPageSize(
+                    size: PageSize(width: numbers[2] * pointsPerUserUnit,
+                                   height: numbers[3] * pointsPerUserUnit),
+                    source: .viewBox
+                )
             }
         }
 
         return nil
     }
+
+    /// `intrinsicPageSize(ofRootTag:)` for a whole document.
+    static func intrinsicPageSize(ofDocument svgString: String) -> IntrinsicPageSize? {
+        guard let rootTagRange = rootTagRange(in: svgString) else { return nil }
+        return intrinsicPageSize(ofRootTag: String(svgString[rootTagRange]))
+    }
+
+    /// The intrinsic size of a document, in user units: its `width`/`height` if
+    /// both are readable lengths, otherwise the size its `viewBox` declares.
+    ///
+    /// Only the ratio of the two ends up mattering to `fitRect`, but `compose`
+    /// also synthesizes a `viewBox` from this, and a `viewBox` is written in the
+    /// document's own user units — so this one stays unconverted.
+    static func intrinsicSize(ofRootTag rootTag: String) -> Size? {
+        guard let intrinsic = intrinsicPageSize(ofRootTag: rootTag) else { return nil }
+        return Size(width: intrinsic.size.width / pointsPerUserUnit,
+                    height: intrinsic.size.height / pointsPerUserUnit)
+    }
+
+    /// A CSS pixel is 1/96 inch; a PDF point is 1/72.
+    static let pointsPerUserUnit = 72.0 / 96
 
     /// Converts an SVG length to user units (1 user unit = 1 CSS pixel).
     /// Percentages and other relative lengths have no size of their own and
@@ -166,7 +240,7 @@ enum SVGPageComposer {
     /// The range of the document's root `<svg …>` tag, open angle bracket to
     /// close. An attribute value containing `>` would fool this, as it would
     /// fool `PageNumberInjector`; no SVG producer we care about writes one.
-    private static func rootTagRange(in svgString: String) -> Range<String.Index>? {
+    static func rootTagRange(in svgString: String) -> Range<String.Index>? {
         guard let regex = try? NSRegularExpression(pattern: #"<svg\b[^>]*>"#),
               let match = regex.firstMatch(in: svgString, range: NSRange(svgString.startIndex..., in: svgString))
         else { return nil }

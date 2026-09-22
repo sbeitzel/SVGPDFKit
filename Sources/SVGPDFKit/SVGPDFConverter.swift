@@ -18,6 +18,16 @@ import Foundation
 /// let result = try converter.makePDF(sources: selectedSVGs)
 /// ```
 ///
+/// Mixed-orientation binder — each page keeps the size its own SVG declares,
+/// at 1:1, so landscape tunes get landscape pages and portrait tunes portrait
+/// ones in the same document:
+/// ```swift
+/// var options = ConversionOptions()
+/// options.pageSize = nil           // take the page from the SVG
+/// let converter = SVGPDFConverter(options: options)
+/// let result = try converter.makePDF(sources: svgSources)
+/// ```
+///
 /// Asking for page numbers is not the same as getting them: an SVG that carries
 /// no placeholder cannot be stamped. That is reported rather than thrown, so
 /// check the result when it matters:
@@ -105,8 +115,10 @@ extension SVGPDFConverter {
 
     private func convertViaCoreGraphics(sources: [SVGSource]) throws -> ConversionResult {
         let pdfData = NSMutableData()
-        let pageRect = options.pageSize.cgRect
 
+        // `mediaBox: nil` leaves the document without a default page size, which
+        // is what lets `beginPage(mediaBox:)` give each page its own — the whole
+        // point of a mixed-orientation binder (issue #5).
         guard let context = CGContext(
             consumer: CGDataConsumer(data: pdfData as CFMutableData)!,
             mediaBox: nil,
@@ -115,54 +127,50 @@ extension SVGPDFConverter {
             throw SVGPDFError.pdfContextCreationFailed
         }
 
-        var missingPages: [Int] = []
+        var log = DiagnosticLog(handler: options.diagnosticHandler)
 
         for (index, source) in sources.enumerated() {
             let pageNumber = options.startingPageNumber + index
             try renderPage(
                 source: source,
                 pageNumber: pageNumber,
-                pageRect: pageRect,
                 into: context,
-                missingPages: &missingPages
+                log: &log
             )
         }
 
         context.closePDF()
-        return ConversionResult(
-            pdfData: pdfData as Data,
-            pagesMissingPageNumberPlaceholder: missingPages
-        )
+        return ConversionResult(pdfData: pdfData as Data, diagnostics: log.diagnostics)
     }
 
     private func renderPage(
         source: SVGSource,
         pageNumber: Int,
-        pageRect: CGRect,
         into context: CGContext,
-        missingPages: inout [Int]
+        log: inout DiagnosticLog
     ) throws {
         let svgData = try applyPageNumber(
             to: try resolveSVGData(from: source),
             pageNumber: pageNumber,
-            missingPages: &missingPages
+            log: &log
         )
 
+        let layout = try pageLayout(forDocument: svgData, pageNumber: pageNumber, log: &log)
         let image = try parseImage(from: svgData)
 
-        var mediaBox = pageRect
+        var mediaBox = layout.pageSize.cgRect
         context.beginPage(mediaBox: &mediaBox)
 
-        let drawRect = pageFrame(for: image.size)
+        let drawRect = pageFrame(for: image.size, layout: layout)
 
         // Flip the coordinate system (PDF origin is bottom-left, CGContext drawing is top-left)
         context.saveGState()
-        context.translateBy(x: 0, y: pageRect.height)
+        context.translateBy(x: 0, y: mediaBox.height)
         context.scaleBy(x: 1, y: -1)
 
         let flippedRect = CGRect(
             x: drawRect.origin.x,
-            y: pageRect.height - drawRect.origin.y - drawRect.height,
+            y: mediaBox.height - drawRect.origin.y - drawRect.height,
             width: drawRect.width,
             height: drawRect.height
         )
@@ -183,11 +191,16 @@ extension SVGPDFConverter {
     /// margins and centred. `SVGPageComposer` owns the arithmetic so that the
     /// rsvg backend, which has to bake this placement into the document itself,
     /// cannot drift from what is drawn here.
-    private func pageFrame(for imageSize: CGSize) -> CGRect {
+    ///
+    /// On an intrinsically sized page the margin is zero and the page is the
+    /// document's own, so the fit is the identity and the draw is 1:1. Going
+    /// through `fitRect` anyway costs nothing and keeps a document whose size
+    /// SwiftDraw reads differently from us centred rather than stretched.
+    private func pageFrame(for imageSize: CGSize, layout: PageLayout) -> CGRect {
         let frame = SVGPageComposer.fitRect(
             content: SVGPageComposer.Size(width: imageSize.width, height: imageSize.height),
-            pageSize: options.pageSize,
-            margin: options.margin
+            pageSize: layout.pageSize,
+            margin: layout.margin
         )
         return CGRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height)
     }
@@ -210,13 +223,13 @@ extension SVGPDFConverter {
             try? FileManager.default.removeItem(at: outputURL)
         }
 
-        var missingPages: [Int] = []
+        var log = DiagnosticLog(handler: options.diagnosticHandler)
 
         for (index, source) in sources.enumerated() {
             let pageNumber = options.startingPageNumber + index
             let url = try prepareTempSVG(source: source, pageNumber: pageNumber,
                                          tempDir: tempDir, name: "\(runID)-page\(index).svg",
-                                         missingPages: &missingPages)
+                                         log: &log)
             tempInputURLs.append(url)
         }
 
@@ -224,7 +237,7 @@ extension SVGPDFConverter {
 
         return ConversionResult(
             pdfData: try Data(contentsOf: outputURL),
-            pagesMissingPageNumberPlaceholder: missingPages
+            diagnostics: log.diagnostics
         )
     }
 
@@ -233,49 +246,74 @@ extension SVGPDFConverter {
         pageNumber: Int,
         tempDir: URL,
         name: String,
-        missingPages: inout [Int]
+        log: inout DiagnosticLog
     ) throws -> URL {
         let svgData = try applyPageNumber(
             to: try resolveSVGData(from: source),
             pageNumber: pageNumber,
-            missingPages: &missingPages
+            log: &log
         )
 
         guard let svgString = String(data: svgData, encoding: .utf8) else {
             throw SVGPDFError.invalidSVGEncoding
         }
-        let composed = SVGPageComposer.compose(
-            page: svgString,
-            pageSize: options.pageSize,
-            margin: options.margin
-        )
-        guard let composedData = composed.data(using: .utf8) else {
+
+        // Reading the layout is what validates an intrinsically sized page and
+        // reports a mismatched explicit one, so it runs on both branches even
+        // though only the explicit one needs the numbers.
+        let layout = try pageLayout(forDocument: svgString, pageNumber: pageNumber, log: &log)
+
+        // An intrinsically sized page is handed to rsvg-convert untouched: with
+        // no `--page-*`/`--width`/`--height` arguments it takes each input's own
+        // declared size as that page's media box, which is exactly what was
+        // asked for, and wrapping the document in a page-sized root would only
+        // throw that size away.
+        let rewritten = options.pageSize == nil
+            ? svgString
+            : SVGPageComposer.compose(page: svgString,
+                                      pageSize: layout.pageSize,
+                                      margin: layout.margin)
+
+        guard let rewrittenData = rewritten.data(using: .utf8) else {
             throw SVGPDFError.invalidSVGEncoding
         }
 
         let url = tempDir.appendingPathComponent(name)
-        try composedData.write(to: url)
+        try rewrittenData.write(to: url)
         return url
     }
 
     static let rsvgConvertPath = "/usr/bin/rsvg-convert"
 
+    /// The page-geometry arguments for one `rsvg-convert` run.
+    ///
+    /// With an explicit `pageSize`, every input has already been composed to
+    /// exactly that size with its content placed inside the margins, so the
+    /// drawing box is the whole page and rsvg-convert has no placement left to
+    /// get wrong. Shrinking the box by the margin here instead would put all of
+    /// it on the right and bottom edges, because `--left`/`--top` default to
+    /// zero and `--keep-aspect-ratio` fits to the top-left corner (issue #4).
+    ///
+    /// With no `pageSize` the arguments are simply absent, and that is the whole
+    /// mechanism: one run can carry only one `--page-width`, but given none,
+    /// rsvg-convert gives every page in the PDF the size its own input declared,
+    /// converting CSS pixels to points as it goes. A mixed-orientation binder
+    /// therefore still needs exactly one invocation and no PDF merge step
+    /// (issue #5).
+    static func sizeArguments(for pageSize: PageSize?) -> [String] {
+        guard let pageSize else { return [] }
+        return [
+            "--page-width=\(pageSize.width)pt",
+            "--page-height=\(pageSize.height)pt",
+            "--width=\(pageSize.width)pt",
+            "--height=\(pageSize.height)pt",
+            "--keep-aspect-ratio"
+        ]
+    }
+
     private func runRsvgConvert(inputs: [String], output: String) throws {
-        // Every input has already been composed to exactly the page size with
-        // its content placed inside the margins, so the drawing box is the whole
-        // page and rsvg-convert has no placement left to get wrong. Shrinking
-        // the box by the margin here instead would put all of it on the right
-        // and bottom edges, because `--left`/`--top` default to zero and
-        // `--keep-aspect-ratio` fits to the top-left corner (issue #4).
-        let arguments = [
-            "--format=pdf",
-            "--page-width=\(options.pageSize.width)pt",
-            "--page-height=\(options.pageSize.height)pt",
-            "--width=\(options.pageSize.width)pt",
-            "--height=\(options.pageSize.height)pt",
-            "--keep-aspect-ratio",
-            "-o", output
-        ] + inputs
+        let arguments = ["--format=pdf"] + Self.sizeArguments(for: options.pageSize)
+            + ["-o", output] + inputs
 
         // The child's stderr goes to a file rather than a `Pipe`. Nothing can drain
         // a pipe while we are waiting for the child, so a document that makes
@@ -353,13 +391,13 @@ extension SVGPDFConverter {
     /// that and the document has one.
     ///
     /// A document with no placeholder is not an error — it renders as-is — but it
-    /// is not silent either: the page is recorded in `missingPages` and reported
-    /// to `options.diagnosticHandler`. Both platform paths go through here, so a
-    /// miss is reported identically on macOS and Linux.
+    /// is not silent either: the miss goes into `log`, which both reports it live
+    /// and carries it into the `ConversionResult`. Both platform paths go through
+    /// here, so a miss is reported identically on macOS and Linux.
     func applyPageNumber(
         to svgData: Data,
         pageNumber: Int,
-        missingPages: inout [Int]
+        log: inout DiagnosticLog
     ) throws -> Data {
         guard options.injectPageNumbers else { return svgData }
 
@@ -370,15 +408,82 @@ extension SVGPDFConverter {
         )
 
         if outcome.replacements == 0 {
-            missingPages.append(pageNumber)
-            options.diagnosticHandler(
-                SVGPDFDiagnostic(
-                    page: pageNumber,
-                    kind: .pageNumberPlaceholderNotFound(elementID: options.pageNumberElementID)
-                )
-            )
+            log.report(page: pageNumber,
+                       .pageNumberPlaceholderNotFound(elementID: options.pageNumberElementID))
         }
 
         return outcome.data
+    }
+
+    /// The page one source lands on: its media box, and the inset its content
+    /// gets inside it.
+    struct PageLayout: Equatable {
+        var pageSize: PageSize
+        var margin: Double
+    }
+
+    /// Resolves the page for one source and reports what resolving it revealed.
+    ///
+    /// With an explicit `options.pageSize` the answer is that size and
+    /// `options.margin`, and the only work here is noticing that the document is
+    /// a different shape than the page — which means aspect-fitting is about to
+    /// shrink it, the silent 68% reduction of issue #5.
+    ///
+    /// With `options.pageSize == nil` the page is the one the document declares,
+    /// and the margin is zero: the SVG's own box *is* the page, so there is
+    /// nowhere to inset the content to without scaling it, and not scaling it is
+    /// the point. A document that declares no size at all cannot answer the
+    /// question and throws rather than quietly getting a default.
+    ///
+    /// Both backends resolve through here, so a PDF built on macOS has the same
+    /// media boxes as one built on Linux.
+    func pageLayout(
+        forDocument svgString: String,
+        pageNumber: Int,
+        log: inout DiagnosticLog
+    ) throws -> PageLayout {
+        let intrinsic = SVGPageComposer.intrinsicPageSize(ofDocument: svgString)
+
+        guard let requested = options.pageSize else {
+            guard let intrinsic else {
+                throw SVGPDFError.intrinsicPageSizeUnavailable(page: pageNumber)
+            }
+            if intrinsic.source == .viewBox {
+                log.report(page: pageNumber, .intrinsicPageSizeFromViewBox(size: intrinsic.size))
+            }
+            return PageLayout(pageSize: intrinsic.size, margin: 0)
+        }
+
+        if let intrinsic {
+            let content = SVGPageComposer.Size(width: intrinsic.size.width,
+                                               height: intrinsic.size.height)
+            if SVGPageComposer.isDifferentShape(content: content, from: requested) {
+                let scale = SVGPageComposer.fitScale(content: content,
+                                                     pageSize: requested,
+                                                     margin: options.margin)
+                log.report(page: pageNumber,
+                           .pageSizeMismatch(svg: intrinsic.size, page: requested, scale: scale))
+            }
+        }
+
+        return PageLayout(pageSize: requested, margin: options.margin)
+    }
+
+    /// `pageLayout(forDocument:pageNumber:log:)` for a backend holding `Data`.
+    ///
+    /// The decoding is lossy on purpose. Only the root `<svg …>` tag is read, and
+    /// that is ASCII in every SVG there is; a document in some other encoding
+    /// still renders, so refusing to size it would be a new way to fail on input
+    /// that used to work.
+    func pageLayout(
+        forDocument svgData: Data,
+        pageNumber: Int,
+        log: inout DiagnosticLog
+    ) throws -> PageLayout {
+        try pageLayout(
+            forDocument: String(decoding: svgData, as: UTF8.self),
+            pageNumber: pageNumber,
+            log: &log
+        )
     }
 }
