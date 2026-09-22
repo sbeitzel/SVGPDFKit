@@ -29,7 +29,7 @@ Add to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/yourorg/SVGPDFKit.git", from: "0.4.0")
+    .package(url: "https://github.com/sbeitzel/SVGPDFKit.git", from: "0.4.0")
 ],
 targets: [
     .target(name: "YourTarget", dependencies: ["SVGPDFKit"])
