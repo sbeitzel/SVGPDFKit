@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.0]
+
+### Added
+
+- `SVGPDFConverter.makePDF(source:)`, `makePDF(sources:)` and `makePDF(sources:to:)`, returning a new `ConversionResult`. Alongside the PDF, the result carries `pagesMissingPageNumberPlaceholder` — the pages where `injectPageNumbers` was asked for but no placeholder element was found — and `allPageNumbersInjected`. The reported values are page *numbers*, as assigned by `startingPageNumber`, not indices into the source array.
+- `SVGPDFDiagnostic` and `DiagnosticHandler`, plus `ConversionOptions.diagnosticHandler` (default `.standardError`). Non-fatal conditions noticed during conversion are delivered here as they happen. `.silent` discards them; a custom handler routes them into a logger.
+
+### Changed
+
+- **Behavior change:** a page-number placeholder that `injectPageNumbers` asked for and did not find now writes a warning to stderr instead of passing silently ([#3](https://github.com/sbeitzel/SVGPDFKit/issues/3)). The conversion still succeeds — an SVG with no placeholder renders as-is, as before — but `startingPageNumber` can no longer be a setter that does nothing without saying so. That silence is how [SVPB/svpb-tools#19](https://github.com/SVPB/svpb-tools/issues/19) went unnoticed: every tune in an assembled binder restarted its footer at 1, with no throw, no warning and no log line. A mismatched or typo'd `pageNumberElementID` is now reported the same way, since from the converter's side it is the same thing.
+
+  To suppress the warning, set `options.diagnosticHandler = .silent`. For SVGs that carry their own correct page numbers, `options.injectPageNumbers = false` is the better answer: it suppresses the search and the report together, and records the intent.
+
+### Deprecated
+
+- `convert(source:)`, `convert(sources:)` and `convert(sources:to:)`, in favour of the `makePDF` family. The old methods still work and still return `Data`; they simply cannot tell a caller that the page numbers they asked for were never injected. They will be removed in a future release. Migration is `try converter.convert(sources:)` → `try converter.makePDF(sources:).pdfData`.
+
+### Fixed
+
+- The page-number placeholder contract is no longer documented as ABCKit-specific. `pageNumberElementID` has always been configurable, so the contract is "emit a `<text>` element with the ID you configured"; ABCKit is one example producer rather than the definition. Corrected in `PageNumberInjector`, `ConversionOptions` and the README.
+- The docs now state the limits of the match, which were previously left implicit: the element must be literally `<text>` (the ID is configurable, the element name is not), and its content must be plain text, so a `<text>` wrapping a `<tspan>` will not match. Text that a renderer has converted to path geometry leaves no `<text>` element at all and cannot be reached under any ID — a consumer in that position wants the number correct at engrave time and should set `injectPageNumbers = false`.
+
+---
+
 ## [0.3.0]
 
 ### Fixed
