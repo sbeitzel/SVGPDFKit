@@ -4,7 +4,7 @@ import CoreGraphics
 #endif
 
 /// The physical dimensions of a PDF page, in points (1 point = 1/72 inch).
-public struct PageSize: Sendable {
+public struct PageSize: Sendable, Equatable, Hashable, CustomStringConvertible {
     public let width: Double
     public let height: Double
 
@@ -18,6 +18,21 @@ public struct PageSize: Sendable {
         CGRect(x: 0, y: 0, width: width, height: height)
     }
 #endif
+
+    /// `"792 × 612 pt"` — the form diagnostics quote a page in.
+    public var description: String {
+        "\(Self.format(width)) × \(Self.format(height)) pt"
+    }
+
+    /// Two decimal places, no trailing zeroes, no locale: enough to tell 595.28
+    /// from 612 without printing `841.890000` for A4.
+    private static func format(_ value: Double) -> String {
+        var text = String(format: "%.2f", value)
+        guard text.contains(".") else { return text }
+        while text.hasSuffix("0") { text.removeLast() }
+        if text.hasSuffix(".") { text.removeLast() }
+        return text
+    }
 }
 
 // MARK: - Standard Presets

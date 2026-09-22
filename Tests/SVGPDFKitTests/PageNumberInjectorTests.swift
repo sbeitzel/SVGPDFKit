@@ -155,6 +155,8 @@ extension SVGPDFError: Equatable {
         case (.pdfContextCreationFailed, .pdfContextCreationFailed): return true
         case (.noInputProvided, .noInputProvided): return true
         case (.svgParsingFailed, .svgParsingFailed): return true
+        case (.intrinsicPageSizeUnavailable(let lhs), .intrinsicPageSizeUnavailable(let rhs)):
+            return lhs == rhs
         default: return false
         }
     }

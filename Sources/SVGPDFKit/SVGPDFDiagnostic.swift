@@ -15,6 +15,28 @@ public struct SVGPDFDiagnostic: Sendable, Equatable, CustomStringConvertible {
         /// number was not injected. The page renders with whatever number —
         /// or none — the source SVG already contained.
         case pageNumberPlaceholderNotFound(elementID: String)
+
+        /// `ConversionOptions.pageSize` named a page of a different shape than
+        /// the SVG was engraved for, so aspect-fitting the document scaled it by
+        /// `scale` and left the difference as blank paper.
+        ///
+        /// This is almost always a caller who guessed the page size wrong rather
+        /// than one who wanted a reduction — the failure
+        /// [#5](https://github.com/sbeitzel/SVGPDFKit/issues/5) was filed for,
+        /// where a `792 × 612` landscape tune on a portrait letter page came out
+        /// at 68% and nothing said so. Setting `pageSize` to `nil` takes the page
+        /// from the SVG and removes the guess.
+        case pageSizeMismatch(svg: PageSize, page: PageSize, scale: Double)
+
+        /// `ConversionOptions.pageSize` was `nil` — take the page from the SVG —
+        /// and the document declared no `width`/`height`, so its page size was
+        /// read from the `viewBox`.
+        ///
+        /// A `viewBox` is a coordinate system, not a physical size, so this is an
+        /// assumption: its extent is read as user units, 96 to the inch, which is
+        /// what every renderer does with it. A producer that means points is off
+        /// by a quarter, and should say so with a `width` and `height`.
+        case intrinsicPageSizeFromViewBox(size: PageSize)
     }
 
     /// The page number this diagnostic concerns, as assigned by
@@ -33,6 +55,15 @@ public struct SVGPDFDiagnostic: Sendable, Equatable, CustomStringConvertible {
         switch kind {
         case .pageNumberPlaceholderNotFound(let elementID):
             return #"SVGPDFKit: page \#(page) — no element with id="\#(elementID)"; page number not injected"#
+        case .pageSizeMismatch(let svg, let pageSize, let scale):
+            let percent = Int((scale * 100).rounded())
+            return "SVGPDFKit: page \(page) — the SVG is \(svg) but the page is \(pageSize); "
+                + "the content was scaled to \(percent)% to fit. "
+                + "Set ConversionOptions.pageSize = nil to give each page the size its SVG declares."
+        case .intrinsicPageSizeFromViewBox(let size):
+            return "SVGPDFKit: page \(page) — the SVG declares no width/height; its page size was read "
+                + "from the viewBox as \(size), taking user units as 1/96 inch. "
+                + "Give the root <svg> a width and height if that is not the intended size."
         }
     }
 }
