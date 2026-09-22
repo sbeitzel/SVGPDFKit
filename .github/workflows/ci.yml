@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+# A new push to a PR supersedes the run already in flight for it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: Build and test (macOS)
+    # Package.swift declares swift-tools-version 6.2, so the toolchain must be
+    # Xcode 26 or newer.  macos-26 satisfies that by default; the version is
+    # echoed below so a default drift is obvious in the log rather than
+    # surfacing as a mystery parse error.
+    runs-on: macos-26
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Report toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Cache SwiftPM dependencies
+        uses: actions/cache@v5
+        with:
+          path: ~/Library/Caches/org.swift.swiftpm
+          key: swiftpm-macos-${{ hashFiles('Package.resolved') }}
+          restore-keys: swiftpm-macos-
+
+      - name: Resolve dependencies
+        run: swift package resolve
+
+      - name: Build
+        run: swift build --build-tests
+
+      # This leg exercises the CoreGraphics rendering path.
+      - name: Test
+        run: swift test --skip-build
+
+  linux:
+    name: Build and test (Linux)
+    runs-on: ubuntu-latest
+    # The official Swift image pins the toolchain, so the Linux leg does not
+    # drift with the runner image the way the macOS leg can.  Keep this tag in
+    # step with the Swift version the macOS Xcode ships.
+    container: swift:6.2
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Report toolchain
+        run: swift --version
+
+      # Without CoreGraphics, conversion shells out to rsvg-convert at the
+      # absolute path SVGPDFConverter.rsvgConvertPath names, so the Linux leg
+      # cannot convert anything until librsvg is installed.
+      - name: Install librsvg
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends librsvg2-bin
+          rsvg-convert --version
+
+      - name: Cache SwiftPM dependencies
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/org.swift.swiftpm
+          key: swiftpm-linux-${{ hashFiles('Package.resolved') }}
+          restore-keys: swiftpm-linux-
+
+      - name: Resolve dependencies
+        run: swift package resolve
+
+      - name: Build
+        run: swift build --build-tests
+
+      # Expect a slightly higher test count here than on macOS: RsvgSubprocessTests
+      # is behind `#if !canImport(CoreGraphics)` and compiles to nothing where
+      # CoreGraphics exists.
+      #
+      # The `swift test` hang the README describes is specific to Docker Desktop's
+      # VM kernel, which reports a coarse CLOCK_MONOTONIC resolution and leaves
+      # RunLoop deadlines unenforced (issue #1).  GitHub's Linux runners report a
+      # 1 ns resolution, and a container inherits the host kernel's clock, so the
+      # LD_PRELOAD workaround in Scripts/fineres.c is not needed here.
+      - name: Test
+        run: swift test --skip-build
