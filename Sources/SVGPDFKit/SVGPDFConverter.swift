@@ -153,8 +153,7 @@ extension SVGPDFConverter {
         var mediaBox = pageRect
         context.beginPage(mediaBox: &mediaBox)
 
-        let contentRect = pageRect.insetBy(dx: options.margin, dy: options.margin)
-        let drawRect = aspectFitRect(imageSize: image.size, in: contentRect)
+        let drawRect = pageFrame(for: image.size)
 
         // Flip the coordinate system (PDF origin is bottom-left, CGContext drawing is top-left)
         context.saveGState()
@@ -180,24 +179,17 @@ extension SVGPDFConverter {
         return image
     }
 
-    /// Returns a rect that fits `imageSize` within `containerRect`,
-    /// preserving aspect ratio and centering the result.
-    private func aspectFitRect(imageSize: CGSize, in containerRect: CGRect) -> CGRect {
-        guard imageSize.width > 0, imageSize.height > 0 else {
-            return containerRect
-        }
-
-        let widthRatio = containerRect.width / imageSize.width
-        let heightRatio = containerRect.height / imageSize.height
-        let scale = min(widthRatio, heightRatio)
-
-        let scaledWidth = imageSize.width * scale
-        let scaledHeight = imageSize.height * scale
-
-        let x = containerRect.origin.x + (containerRect.width - scaledWidth) / 2
-        let y = containerRect.origin.y + (containerRect.height - scaledHeight) / 2
-
-        return CGRect(x: x, y: y, width: scaledWidth, height: scaledHeight)
+    /// Where an image of `imageSize` sits on the page: aspect-fitted inside the
+    /// margins and centred. `SVGPageComposer` owns the arithmetic so that the
+    /// rsvg backend, which has to bake this placement into the document itself,
+    /// cannot drift from what is drawn here.
+    private func pageFrame(for imageSize: CGSize) -> CGRect {
+        let frame = SVGPageComposer.fitRect(
+            content: SVGPageComposer.Size(width: imageSize.width, height: imageSize.height),
+            pageSize: options.pageSize,
+            margin: options.margin
+        )
+        return CGRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height)
     }
 }
 #endif
@@ -249,23 +241,38 @@ extension SVGPDFConverter {
             missingPages: &missingPages
         )
 
+        guard let svgString = String(data: svgData, encoding: .utf8) else {
+            throw SVGPDFError.invalidSVGEncoding
+        }
+        let composed = SVGPageComposer.compose(
+            page: svgString,
+            pageSize: options.pageSize,
+            margin: options.margin
+        )
+        guard let composedData = composed.data(using: .utf8) else {
+            throw SVGPDFError.invalidSVGEncoding
+        }
+
         let url = tempDir.appendingPathComponent(name)
-        try svgData.write(to: url)
+        try composedData.write(to: url)
         return url
     }
 
     static let rsvgConvertPath = "/usr/bin/rsvg-convert"
 
     private func runRsvgConvert(inputs: [String], output: String) throws {
-        let contentWidth = options.pageSize.width - 2 * options.margin
-        let contentHeight = options.pageSize.height - 2 * options.margin
-
+        // Every input has already been composed to exactly the page size with
+        // its content placed inside the margins, so the drawing box is the whole
+        // page and rsvg-convert has no placement left to get wrong. Shrinking
+        // the box by the margin here instead would put all of it on the right
+        // and bottom edges, because `--left`/`--top` default to zero and
+        // `--keep-aspect-ratio` fits to the top-left corner (issue #4).
         let arguments = [
             "--format=pdf",
             "--page-width=\(options.pageSize.width)pt",
             "--page-height=\(options.pageSize.height)pt",
-            "--width=\(contentWidth)pt",
-            "--height=\(contentHeight)pt",
+            "--width=\(options.pageSize.width)pt",
+            "--height=\(options.pageSize.height)pt",
             "--keep-aspect-ratio",
             "-o", output
         ] + inputs
