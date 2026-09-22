@@ -1,6 +1,30 @@
 import XCTest
 @testable import SVGPDFKit
 
+/// Collects diagnostics from a conversion so a test can assert on them.
+///
+/// `DiagnosticHandler` stores a `@Sendable` closure, so the collector has to be
+/// safe to touch from wherever the handler is called — hence the lock rather
+/// than a captured `var`.
+private final class DiagnosticCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [SVGPDFDiagnostic] = []
+
+    var diagnostics: [SVGPDFDiagnostic] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    var handler: DiagnosticHandler {
+        DiagnosticHandler { [self] diagnostic in
+            lock.lock()
+            defer { lock.unlock() }
+            storage.append(diagnostic)
+        }
+    }
+}
+
 final class SVGPDFConverterTests: XCTestCase {
 
     // MARK: - Helpers
@@ -38,11 +62,26 @@ final class SVGPDFConverterTests: XCTestCase {
         """
     }
 
+    /// Options that say nothing, for the tests that deliberately convert an SVG
+    /// with no placeholder and would otherwise warn on stderr.
+    private func silentOptions() -> ConversionOptions {
+        var options = ConversionOptions()
+        options.diagnosticHandler = .silent
+        return options
+    }
+
+    private func assertIsPDF(_ data: Data, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertFalse(data.isEmpty, "PDF data is empty", file: file, line: line)
+        // PDF files start with "%PDF"
+        let header = String(data: data.prefix(4), encoding: .ascii)
+        XCTAssertEqual(header, "%PDF", file: file, line: line)
+    }
+
     // MARK: - Error cases
 
     func testThrowsWhenNoSourcesProvided() {
         let converter = SVGPDFConverter()
-        XCTAssertThrowsError(try converter.convert(sources: [])) { error in
+        XCTAssertThrowsError(try converter.makePDF(sources: [])) { error in
             XCTAssertEqual(error as? SVGPDFError, .noInputProvided)
         }
     }
@@ -52,45 +91,33 @@ final class SVGPDFConverterTests: XCTestCase {
     func testConvertsSingleStringSource() throws {
         let converter = SVGPDFConverter()
         let source = SVGSource.string(makeSVGString())
-        let pdfData = try converter.convert(source: source)
+        let result = try converter.makePDF(source: source)
 
-        XCTAssertFalse(pdfData.isEmpty)
-        // PDF files start with "%PDF"
-        let header = String(data: pdfData.prefix(4), encoding: .ascii)
-        XCTAssertEqual(header, "%PDF")
+        assertIsPDF(result.pdfData)
     }
 
     func testConvertsSingleFileURLSource() throws {
         let converter = SVGPDFConverter()
-        let url = try testSVGURL
-        let source = SVGSource.fileURL(url)
-        let pdfData = try converter.convert(source: source)
+        let source = SVGSource.fileURL(try testSVGURL)
+        let result = try converter.makePDF(source: source)
 
-        XCTAssertFalse(pdfData.isEmpty)
-        let header = String(data: pdfData.prefix(4), encoding: .ascii)
-        XCTAssertEqual(header, "%PDF")
+        assertIsPDF(result.pdfData)
     }
 
     func testConvertsFileURLSourceWithoutPageNumberElement() throws {
-        let converter = SVGPDFConverter()
-        let url = try noPageNumberSVGURL
-        let source = SVGSource.fileURL(url)
-        let pdfData = try converter.convert(source: source)
+        let converter = SVGPDFConverter(options: silentOptions())
+        let source = SVGSource.fileURL(try noPageNumberSVGURL)
+        let result = try converter.makePDF(source: source)
 
-        XCTAssertFalse(pdfData.isEmpty)
-        let header = String(data: pdfData.prefix(4), encoding: .ascii)
-        XCTAssertEqual(header, "%PDF")
+        assertIsPDF(result.pdfData)
     }
 
     func testConvertsSingleDataSource() throws {
         let svgData = try XCTUnwrap(makeSVGString().data(using: .utf8))
         let converter = SVGPDFConverter()
-        let source = SVGSource.data(svgData)
-        let pdfData = try converter.convert(source: source)
+        let result = try converter.makePDF(source: .data(svgData))
 
-        XCTAssertFalse(pdfData.isEmpty)
-        let header = String(data: pdfData.prefix(4), encoding: .ascii)
-        XCTAssertEqual(header, "%PDF")
+        assertIsPDF(result.pdfData)
     }
 
     // MARK: - Multi-page
@@ -102,11 +129,9 @@ final class SVGPDFConverterTests: XCTestCase {
             SVGSource.string(makeSVGString(title: "Tune Two")),
             SVGSource.string(makeSVGString(title: "Tune Three"))
         ]
-        let pdfData = try converter.convert(sources: sources)
+        let result = try converter.makePDF(sources: sources)
 
-        XCTAssertFalse(pdfData.isEmpty)
-        let header = String(data: pdfData.prefix(4), encoding: .ascii)
-        XCTAssertEqual(header, "%PDF")
+        assertIsPDF(result.pdfData)
     }
 
     // MARK: - Page number options
@@ -119,11 +144,10 @@ final class SVGPDFConverterTests: XCTestCase {
         options.startingPageNumber = 12
 
         let converter = SVGPDFConverter(options: options)
-        let source = SVGSource.string(makeSVGString())
-        let pdfData = try converter.convert(source: source)
+        let result = try converter.makePDF(source: .string(makeSVGString()))
 
-        let header = String(data: pdfData.prefix(4), encoding: .ascii)
-        XCTAssertEqual(header, "%PDF")
+        assertIsPDF(result.pdfData)
+        XCTAssertTrue(result.allPageNumbersInjected)
     }
 
     func testPageNumberInjectionCanBeDisabled() throws {
@@ -131,20 +155,125 @@ final class SVGPDFConverterTests: XCTestCase {
         options.injectPageNumbers = false
 
         let converter = SVGPDFConverter(options: options)
-        let source = SVGSource.string(makeSVGString())
-        let pdfData = try converter.convert(source: source)
+        let result = try converter.makePDF(source: .string(makeSVGString()))
 
-        let header = String(data: pdfData.prefix(4), encoding: .ascii)
-        XCTAssertEqual(header, "%PDF")
+        assertIsPDF(result.pdfData)
     }
 
     func testSVGWithoutPageNumberElementConvertsSuccessfully() throws {
-        let converter = SVGPDFConverter()
-        let source = SVGSource.string(makeSVGString(withPageNumber: false))
-        let pdfData = try converter.convert(source: source)
+        let converter = SVGPDFConverter(options: silentOptions())
+        let result = try converter.makePDF(source: .string(makeSVGString(withPageNumber: false)))
 
-        let header = String(data: pdfData.prefix(4), encoding: .ascii)
-        XCTAssertEqual(header, "%PDF")
+        assertIsPDF(result.pdfData)
+    }
+
+    // MARK: - Page number reporting (issue #3)
+
+    func testReportsPageWithNoPlaceholder() throws {
+        let converter = SVGPDFConverter(options: silentOptions())
+        let result = try converter.makePDF(source: .string(makeSVGString(withPageNumber: false)))
+
+        XCTAssertEqual(result.pagesMissingPageNumberPlaceholder, [1])
+        XCTAssertFalse(result.allPageNumbersInjected)
+    }
+
+    func testReportsNothingWhenPlaceholderIsPresent() throws {
+        let converter = SVGPDFConverter()
+        let result = try converter.makePDF(source: .string(makeSVGString()))
+
+        XCTAssertEqual(result.pagesMissingPageNumberPlaceholder, [])
+        XCTAssertTrue(result.allPageNumbersInjected)
+    }
+
+    func testReportsNothingWhenInjectionIsDisabled() throws {
+        var options = ConversionOptions()
+        options.injectPageNumbers = false
+        let collector = DiagnosticCollector()
+        options.diagnosticHandler = collector.handler
+
+        let converter = SVGPDFConverter(options: options)
+        let result = try converter.makePDF(source: .string(makeSVGString(withPageNumber: false)))
+
+        // Nothing was asked for, so nothing went unsatisfied.
+        XCTAssertEqual(result.pagesMissingPageNumberPlaceholder, [])
+        XCTAssertTrue(result.allPageNumbersInjected)
+        XCTAssertTrue(collector.diagnostics.isEmpty)
+    }
+
+    func testFixtureWithoutPlaceholderIsReported() throws {
+        let converter = SVGPDFConverter(options: silentOptions())
+        let result = try converter.makePDF(source: .fileURL(try noPageNumberSVGURL))
+
+        XCTAssertEqual(result.pagesMissingPageNumberPlaceholder, [1])
+    }
+
+    func testFixtureWithPlaceholderIsNotReported() throws {
+        let converter = SVGPDFConverter()
+        let result = try converter.makePDF(source: .fileURL(try testSVGURL))
+
+        XCTAssertEqual(result.pagesMissingPageNumberPlaceholder, [])
+    }
+
+    func testDiagnosticHandlerReceivesTheMiss() throws {
+        var options = ConversionOptions()
+        let collector = DiagnosticCollector()
+        options.diagnosticHandler = collector.handler
+
+        let converter = SVGPDFConverter(options: options)
+        _ = try converter.makePDF(source: .string(makeSVGString(withPageNumber: false)))
+
+        XCTAssertEqual(
+            collector.diagnostics,
+            [SVGPDFDiagnostic(page: 1, kind: .pageNumberPlaceholderNotFound(elementID: "svgpdfkit-page-number"))]
+        )
+    }
+
+    func testMisconfiguredElementIDIsReportedLikeAMissingPlaceholder() throws {
+        // A typo'd ID fails exactly as quietly as a missing placeholder used to —
+        // which is the whole point of reporting it.
+        var options = ConversionOptions()
+        options.pageNumberElementID = "not-the-id-in-the-svg"
+        let collector = DiagnosticCollector()
+        options.diagnosticHandler = collector.handler
+
+        let converter = SVGPDFConverter(options: options)
+        let result = try converter.makePDF(source: .string(makeSVGString()))
+
+        XCTAssertEqual(result.pagesMissingPageNumberPlaceholder, [1])
+        XCTAssertEqual(
+            collector.diagnostics.first?.kind,
+            .pageNumberPlaceholderNotFound(elementID: "not-the-id-in-the-svg")
+        )
+    }
+
+    func testReportedValuesArePageNumbersNotIndices() throws {
+        var options = ConversionOptions()
+        options.startingPageNumber = 12
+        let collector = DiagnosticCollector()
+        options.diagnosticHandler = collector.handler
+
+        let converter = SVGPDFConverter(options: options)
+        let sources = [
+            SVGSource.string(makeSVGString(title: "One")),
+            SVGSource.string(makeSVGString(title: "Two", withPageNumber: false)),
+            SVGSource.string(makeSVGString(title: "Three"))
+        ]
+        let result = try converter.makePDF(sources: sources)
+
+        // The second source is page 13, not index 1.
+        XCTAssertEqual(result.pagesMissingPageNumberPlaceholder, [13])
+        XCTAssertEqual(collector.diagnostics.map(\.page), [13])
+    }
+
+    func testDiagnosticDescriptionNamesThePageAndID() {
+        let diagnostic = SVGPDFDiagnostic(
+            page: 12,
+            kind: .pageNumberPlaceholderNotFound(elementID: "svgpdfkit-page-number")
+        )
+        XCTAssertEqual(
+            diagnostic.description,
+            #"SVGPDFKit: page 12 — no element with id="svgpdfkit-page-number"; page number not injected"#
+        )
     }
 
     // MARK: - Page sizes
@@ -154,11 +283,9 @@ final class SVGPDFConverterTests: XCTestCase {
         options.pageSize = .a4
 
         let converter = SVGPDFConverter(options: options)
-        let source = SVGSource.string(makeSVGString())
-        let pdfData = try converter.convert(source: source)
+        let result = try converter.makePDF(source: .string(makeSVGString()))
 
-        let header = String(data: pdfData.prefix(4), encoding: .ascii)
-        XCTAssertEqual(header, "%PDF")
+        assertIsPDF(result.pdfData)
     }
 
     // MARK: - Write to file
@@ -170,16 +297,27 @@ final class SVGPDFConverterTests: XCTestCase {
         let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("pdf")
+        defer { try? FileManager.default.removeItem(at: tempURL) }
 
-        try converter.convert(sources: [source], to: tempURL)
+        let result = try converter.makePDF(sources: [source], to: tempURL)
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: tempURL.path))
+        assertIsPDF(try Data(contentsOf: tempURL))
+        XCTAssertTrue(result.allPageNumbersInjected)
+    }
 
-        let writtenData = try Data(contentsOf: tempURL)
-        let header = String(data: writtenData.prefix(4), encoding: .ascii)
-        XCTAssertEqual(header, "%PDF")
+    func testWriteToFileURLAlsoReportsMisses() throws {
+        let converter = SVGPDFConverter(options: silentOptions())
+        let source = SVGSource.string(makeSVGString(withPageNumber: false))
 
-        try? FileManager.default.removeItem(at: tempURL)
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("pdf")
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        let result = try converter.makePDF(sources: [source], to: tempURL)
+
+        XCTAssertEqual(result.pagesMissingPageNumberPlaceholder, [1])
     }
 
     // MARK: - Invalid input
@@ -187,8 +325,54 @@ final class SVGPDFConverterTests: XCTestCase {
     func testThrowsForMissingFileURL() {
         let converter = SVGPDFConverter()
         let badURL = URL(fileURLWithPath: "/nonexistent/path/tune.svg")
-        let source = SVGSource.fileURL(badURL)
 
-        XCTAssertThrowsError(try converter.convert(source: source))
+        XCTAssertThrowsError(try converter.makePDF(source: .fileURL(badURL)))
+    }
+
+    // MARK: - Deprecated API
+    //
+    // These methods are scheduled for removal but must keep working until then.
+    // Each test is itself marked deprecated so calling them raises no warning.
+
+    @available(*, deprecated)
+    func testDeprecatedConvertSingleSourceStillWorks() throws {
+        let converter = SVGPDFConverter()
+        let pdfData = try converter.convert(source: .string(makeSVGString()))
+
+        assertIsPDF(pdfData)
+    }
+
+    @available(*, deprecated)
+    func testDeprecatedConvertMultipleSourcesStillWorks() throws {
+        let converter = SVGPDFConverter()
+        let sources = [
+            SVGSource.string(makeSVGString(title: "One")),
+            SVGSource.string(makeSVGString(title: "Two"))
+        ]
+        let pdfData = try converter.convert(sources: sources)
+
+        assertIsPDF(pdfData)
+    }
+
+    @available(*, deprecated)
+    func testDeprecatedConvertToFileURLStillWorks() throws {
+        let converter = SVGPDFConverter()
+
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("pdf")
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        try converter.convert(sources: [.string(makeSVGString())], to: tempURL)
+
+        assertIsPDF(try Data(contentsOf: tempURL))
+    }
+
+    @available(*, deprecated)
+    func testDeprecatedConvertStillThrowsOnNoInput() {
+        let converter = SVGPDFConverter()
+        XCTAssertThrowsError(try converter.convert(sources: [])) { error in
+            XCTAssertEqual(error as? SVGPDFError, .noInputProvided)
+        }
     }
 }
